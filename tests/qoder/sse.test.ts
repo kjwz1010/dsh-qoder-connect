@@ -506,6 +506,23 @@ test('parseQoderSse keeps rejecting a truncated-stream EOF as a transport failur
   })
 })
 
+test('parseQoderSse accepts a completed stream whose [DONE] frame is missing', async () => {
+  // Observed upstream behaviour: some completed replies close with event:finish
+  // and no [DONE] data frame. The finish event marks a clean end; keep it.
+  const chunks = []
+  for await (const chunk of parseQoderSse(streamOf([
+    data({ choices: [{ delta: { content: 'ok' } }] }),
+    data({
+      choices: [{ delta: { role: '' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 3, completion_tokens: 1 },
+    }),
+    'event:finish',
+    data({ firstTokenDuration: 10, totalDuration: 20, serverDuration: 5 }),
+  ]))) chunks.push(chunk)
+
+  assert.equal(chunks.at(-1)?.type, 'finish')
+})
+
 test('parseQoderSse accepts a final frame without a trailing newline', async () => {
   const encoder = new TextEncoder()
   const inner = JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })

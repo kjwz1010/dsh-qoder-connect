@@ -179,6 +179,9 @@ export async function* parseQoderSse(
   let buffer = ''
   let sourceEnded = false
   let sawDone = false
+  // Qoder sometimes closes a completed response with `event:finish` but no [DONE]
+  // data frame; that close marker is the only safe substitute for [DONE].
+  let sawFinishEvent = false
   let nextBlockIndex = 0
   let activeTextual: TextualBlockState | undefined
   let pendingUsage: TokenUsage | undefined
@@ -258,6 +261,10 @@ export async function* parseQoderSse(
         buffer = buffer.substring(lineEnd + 1)
         if (line.endsWith('\r')) line = line.slice(0, -1)
         line = line.trim()
+        if (line === 'event:finish') {
+          sawFinishEvent = true
+          continue
+        }
         if (!line.startsWith('data:')) continue
 
         const rawData = line.substring(5).trim()
@@ -362,7 +369,10 @@ export async function* parseQoderSse(
 
   // Load-bearing wording: pi-ai reclassifies failures from this text, and TRANSPORT
   // requires the exact "stream ended without" phrase with no status digits.
-  if (!sawDone) throw new QoderLlmError('Qoder SSE stream ended without [DONE].', 'TRANSPORT')
+  if (!sawDone) {
+    if (!sawFinishEvent) throw new QoderLlmError('Qoder SSE stream ended without [DONE].', 'TRANSPORT')
+    options.onDiag?.('stream ended without [DONE] after event:finish; treating the response as complete')
+  }
 
   for (const segment of thinkingParser.finish()) {
     for (const chunk of appendSegment(segment)) yield chunk
